@@ -20,7 +20,8 @@ from typing import Optional
 from ratio_graph import RatioGraph, column_name, frac_str
 
 # ---- 参数 ----
-MAX_ROUNDS = 5          # 去重后每轮只留独特分数，但 12 轮几乎就无法继续运行了
+# round 7 大概是3.37万亿人 能达到33.5% 苏格兰人
+MAX_ROUNDS = 7           # 去重后每轮只留独特分数，但 12 轮几乎就无法继续运行了
 TARGET = Fraction(1, 3)  # 终止条件（按原要求，不改）
 SHOW_FIRST_N = 5         # 展示前几个节点的合成链
 DRAW_TREE = True         # 最后把结果节点的家族树画成 PNG
