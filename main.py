@@ -20,11 +20,11 @@ from typing import Optional
 from ratio_graph import RatioGraph, column_name, frac_str
 
 # ---- 参数 ----
-MAX_ROUNDS = 6         # 图增长很快，先跑 5 轮（约 2280 个节点）
+MAX_ROUNDS = 5          # 去重后每轮只留独特分数，但 12 轮几乎就无法继续运行了
 TARGET = Fraction(1, 3)  # 终止条件（按原要求，不改）
-SHOW_FIRST_N = 5        # 展示前几个节点的合成链
-DRAW_TREE = True        # 最后把结果节点的家族树画成 PNG
-SHOW_TREE = False       # True = 额外弹窗显示（要有图形界面）
+SHOW_FIRST_N = 5         # 展示前几个节点的合成链
+DRAW_TREE = True         # 最后把结果节点的家族树画成 PNG
+SHOW_TREE = False        # True = 额外弹窗显示（要有图形界面）
 
 
 class _Slot:
@@ -64,7 +64,7 @@ def draw_pedigree(
       以及【近亲连线】（橙色粗线）—— 那种连线两端的辈分是重叠的：
       父节点同时又是另一个父节点的祖先，即父辈跟自己的后代配上了。
 
-    只画祖先，不画全图：5 轮之后全图有 2280 个节点，全画出来是一团毛线。
+    只画祖先，不画全图：去重后第 7 轮全图也就 129 个独特分数。
     没装 matplotlib 时直接跳过，不影响主流程。
     """
     try:
@@ -395,8 +395,8 @@ def main() -> None:
     for _ in range(MAX_ROUNDS):
         hit = graph.update(target=TARGET)
         print(
-            f"第 {graph.round} 轮： 新增 {len(graph.frontier):>6} 个节点，"
-            f"累计 {len(graph):>6} 个"
+            f"第 {graph.round} 轮： 新增 {len(graph.frontier):>6} 个独特分数，"
+            f"累计 {len(graph):>6} 个；等同于模拟了 {graph.simulated:,} 人"
         )
         if hit is not None:
             break

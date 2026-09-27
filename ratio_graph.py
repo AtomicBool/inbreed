@@ -12,6 +12,13 @@
   这样任意两节点最终都能通过某个后代连起来，而每轮的工作量只跟新节点数量有关
   （也就是你说的：不用重复考虑已经连过的组合）。
 
+去重
+----
+  同一个 ratio 只保留首次出现的那一个节点，重复的丢弃（见 RatioGraph.by_ratio）。
+  新分数只由父节点的 ratio 值决定，跟具体是哪个节点实例无关，所以丢重复分数
+  不影响后续能合成出的分数集合，却能把节点数从"随轮数爆炸"压到"每轮 2 的幂"量级
+  （第 r 轮累计 2^r + 1 个独特分数）。
+
 节点命名
 --------
 按 A, B, ..., Z, AA, AB, ...（Excel 列名规则）自动递增。
@@ -36,7 +43,7 @@ A-B 之所以配对，就是这个规则本身的一个实例（B 排在 A 后�
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 Number = Union[int, str, Fraction]
 
@@ -115,9 +122,13 @@ class RatioGraph:
             raise ValueError("pair_mode 只能是 'batch' 或 'sequential'")
         self.pair_mode = pair_mode
         self.nodes: List[Node] = []
+        self.by_ratio: Dict[Fraction, Node] = {}  # ratio -> 首个该分数的节点（去重用）
         self.frontier: List[Node] = []   # 上一轮新产生的节点
         self.settled: List[Node] = []    # 本轮开始前就已存在的节点
         self.round = 0
+        self.simulated = 0               # 去重前本应生成的节点数（等同模拟了多少人）
+        self._orig_frontier = 0          # 去重前每轮 frontier 的规模（只记数量）
+        self._orig_settled = 0           # 去重前每轮 settled 的规模
 
     # ---------- 构建 ----------
 
@@ -129,17 +140,28 @@ class RatioGraph:
             ratio=Fraction(ratio),
         )
         self.nodes.append(node)
+        self.by_ratio[Fraction(ratio)] = node
+        self.simulated += 1
         return node
 
-    def _link(self, a: Node, b: Node) -> Node:
-        """连接 a、b，生成新节点：ratio 取两父节点的算术平均。"""
+    def _link(self, a: Node, b: Node) -> Optional[Node]:
+        """连接 a、b：ratio 取两父节点的算术平均。
+
+        若这个 ratio 之前已经出现过，就丢弃（返回 None），不另建节点——未来能
+        合成出哪些新分数只看父节点的 ratio 值，跟具体是哪个节点无关，所以重复
+        分数对可达性没有任何贡献，只白白占内存。
+        """
+        ratio = (a.ratio + b.ratio) / 2
+        if ratio in self.by_ratio:
+            return None
         node = Node(
             index=len(self.nodes),
             name=column_name(len(self.nodes)),
-            ratio=(a.ratio + b.ratio) / 2,
+            ratio=ratio,
             parents=(a, b),
         )
         self.nodes.append(node)
+        self.by_ratio[ratio] = node
         a.children.append(node)
         b.children.append(node)
         return node
@@ -153,34 +175,60 @@ class RatioGraph:
         之后每轮：只把上一轮新产生的节点，按先后顺序连向排在它前面的所有节点
         （同轮里先生出来的那些也算），所以 D-E 之间也会有一条连接。
 
+        去重：新节点的 ratio 若之前已经出现过，就丢弃（不另建节点）。因为新分数
+        只看父节点的 ratio 值，跟具体是哪个节点实例无关，所以丢重复分数不影响
+        后续能合成出的分数集合，却能把节点数压到"每轮 2 的幂"这个量级。
+
         参数 target：本轮生成的新节点里，如果有 ratio 恰好等于 target 的，
         就地返回它（该轮其余节点照常生成，不提前中断）。
         返回值：命中的节点，或 None。同一轮有多个命中时返回最先产生的那个。
         """
         self.round += 1
 
+        # 并行推演"去重前"的规模：只记数量、不真建节点，用来报"等同模拟了多少人"
+        if self.round == 1:
+            orig_created = 1                       # A + B
+        else:
+            orig_created = self._orig_frontier * self._orig_settled
+            if self.pair_mode == "sequential":
+                orig_created += self._orig_frontier * (self._orig_frontier - 1) // 2
+        self.simulated += orig_created
+
         if self.round == 1:
             if len(self.nodes) < 2:
                 raise ValueError("第一轮需要至少两个初始节点")
-            created = [self._link(self.nodes[0], self.nodes[1])]
+            created = []
+            node = self._link(self.nodes[0], self.nodes[1])
+            if node is not None:
+                created.append(node)
             self.settled = list(self.nodes[:2])
         elif self.pair_mode == "batch":
-            created = [
-                self._link(old, new)
-                for new in self.frontier
-                for old in self.settled
-            ]
+            created = []
+            for new in self.frontier:
+                for old in self.settled:
+                    node = self._link(old, new)
+                    if node is not None:
+                        created.append(node)
             self.settled = self.settled + self.frontier
         else:  # sequential
             older = list(self.settled)
             created = []
             for new in self.frontier:
                 for old in older:
-                    created.append(self._link(old, new))
+                    node = self._link(old, new)
+                    if node is not None:
+                        created.append(node)
                 older.append(new)          # 同一轮里先生出来的也算"之前的"
             self.settled = self.settled + self.frontier
 
         self.frontier = created
+
+        if self.round == 1:
+            self._orig_settled = 2
+            self._orig_frontier = 1
+        else:
+            self._orig_settled = self._orig_settled + self._orig_frontier
+            self._orig_frontier = orig_created
 
         if target is not None:
             for node in created:
